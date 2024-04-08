@@ -1,0 +1,4 @@
+test/
+layoutlmv3-base/
+funsd-layoutlmv3/
+__pycache__/*
