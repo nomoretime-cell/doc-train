@@ -1,4 +1,7 @@
+__pycache__/*
 test/
 layoutlmv3-base/
 funsd-layoutlmv3/
-__pycache__/*
+dataset/
+dataset.zip
+__MACOSX/._dataset

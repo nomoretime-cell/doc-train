@@ -8,12 +8,8 @@ from datasets import Features, Sequence, ClassLabel, Value, Array2D, Array3D
 from datasets import load_metric
 import numpy as np
 
-
 # this dataset uses the new Image feature :)
 dataset = load_dataset("funsd-layoutlmv3")
-example = dataset["train"][0]
-print(example["image"])
-
 
 # we'll use the Auto API here - it will load LayoutLMv3Processor behind the scenes,
 # based on the checkpoint we provide from the hub
@@ -38,15 +34,6 @@ def get_label_list(labels):
     label_list = list(unique_labels)
     label_list.sort()
     return label_list
-
-
-def unnormalize_box(bbox, width, height):
-    return [
-        width * (bbox[0] / 1000),
-        height * (bbox[1] / 1000),
-        width * (bbox[2] / 1000),
-        height * (bbox[3] / 1000),
-    ]
 
 
 # Tokenize the inputs
