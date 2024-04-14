@@ -1,7 +1,7 @@
 from transformers import AutoModelForTokenClassification
 from transformers import AutoProcessor
 from datasets import load_dataset
-from PIL import ImageDraw, ImageFont
+from PIL import ImageDraw, ImageFont, Image
 import torch
 
 
@@ -14,19 +14,20 @@ def unnormalize_box(bbox, width, height):
     ]
 
 
+processor = AutoProcessor.from_pretrained("layoutlmv3-base", apply_ocr=False)
+
 model = AutoModelForTokenClassification.from_pretrained("test/checkpoint-1000")
 dataset = load_dataset("funsd-layoutlmv3")
-example = dataset["test"][0]
-image = example["image"]
-words = example["tokens"]
-boxes = example["bboxes"]
-word_labels = example["ner_tags"]
-
-processor = AutoProcessor.from_pretrained("layoutlmv3-base", apply_ocr=False)
+example: dict = dataset["test"][0]
+image: Image = example["image"]
+words: list[str] = example["tokens"]
+boxes: list[list[int]] = example["bboxes"]
+word_labels: list[int] = example["ner_tags"]
 
 encoding = processor(
     image, words, boxes=boxes, word_labels=word_labels, return_tensors="pt"
 )
+
 for k, v in encoding.items():
     print(k, v.shape)
 

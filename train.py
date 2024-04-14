@@ -8,6 +8,10 @@ from datasets import Features, Sequence, ClassLabel, Value, Array2D, Array3D
 from datasets import load_metric
 import numpy as np
 
+# import torch
+# torch.cuda.set_device(0)
+# export CUDA_VISIBLE_DEVICES=0
+
 # this dataset uses the new Image feature :)
 dataset = load_dataset("funsd-layoutlmv3")
 
@@ -37,7 +41,7 @@ def get_label_list(labels):
 
 
 # Tokenize the inputs
-def prepare_examples(examples):
+def tokenize(examples):
     images = examples[image_column_name]
     words = examples[text_column_name]
     boxes = examples[boxes_column_name]
@@ -53,6 +57,9 @@ def prepare_examples(examples):
     )
 
     return encoding
+
+
+metric = load_metric("seqeval")
 
 
 def compute_metrics(p):
@@ -112,22 +119,16 @@ features = Features(
 )
 
 train_dataset = dataset["train"].map(
-    prepare_examples,
+    tokenize,
     batched=True,
     remove_columns=column_names,
     features=features,
 )
 eval_dataset = dataset["test"].map(
-    prepare_examples,
+    tokenize,
     batched=True,
     remove_columns=column_names,
     features=features,
-)
-
-metric = load_metric("seqeval")
-
-model = LayoutLMv3ForTokenClassification.from_pretrained(
-    "layoutlmv3-base", id2label=id2label, label2id=label2id
 )
 
 
@@ -145,6 +146,11 @@ training_args = TrainingArguments(
     metric_for_best_model="f1",
 )
 
+# Load the model
+model = LayoutLMv3ForTokenClassification.from_pretrained(
+    "layoutlmv3-base", id2label=id2label, label2id=label2id
+)
+
 # Initialize our Trainer
 trainer = Trainer(
     model=model,
@@ -157,4 +163,4 @@ trainer = Trainer(
 )
 
 trainer.train()
-trainer.evaluate()
+print(trainer.evaluate())
