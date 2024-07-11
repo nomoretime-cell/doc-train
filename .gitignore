@@ -1,2 +1,4 @@
 dataset/latex2image/arXiv/*
+dataset/latex2image/TableHFDataset/*
 *.png
+dataset/latex2image/latex2image
