@@ -2,6 +2,7 @@ package src
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"image/png"
 	"os"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/gen2brain/go-fitz"
 )
+
+var MAP_DATASET_COUNT = make(map[string]int)
 
 func FindTexFiles(root string) ([]string, error) {
 	var files []string
@@ -64,13 +67,25 @@ func ExtractPreamble(content string, basePath string) (string, error) {
 	return strings.TrimSpace(finalPreamble), nil
 }
 
-func ProcessTexFile(DOC_HEAD string, filePath string, bashPath string, pngBasePath string) {
+func ProcessTexFile(DOC_HEAD string, filePath string, bashPath string, trainDataset string, totalDatasetCount int, isDebug bool) bool {
+	if _, exists := MAP_DATASET_COUNT[trainDataset]; !exists {
+		MAP_DATASET_COUNT[trainDataset] = 0
+	}
+
+	if _, err := os.Stat(trainDataset); os.IsNotExist(err) {
+		err := os.MkdirAll(trainDataset, 0755)
+		if err != nil {
+			fmt.Errorf("failed to create directory: %v", err)
+			return false
+		}
+	}
+
 	fmt.Printf("Processing file: %s\n", filePath)
 
 	latexContent, err := os.ReadFile(filePath)
 	if err != nil {
 		fmt.Printf("Error reading file %s: %v\n", filePath, err)
-		return
+		return true
 	}
 	tables := extractTables(string(latexContent))
 
@@ -79,13 +94,22 @@ func ProcessTexFile(DOC_HEAD string, filePath string, bashPath string, pngBasePa
 	baseName := parentDir + "_" + filename
 
 	for i, table := range tables {
+		if MAP_DATASET_COUNT[trainDataset] >= totalDatasetCount {
+			return false
+		}
+
+		// remove tabs and spaces
+		table = strings.ReplaceAll(table, "\t", "")
+		table = strings.ReplaceAll(table, " ", "")
 		fullLatex := createFullLatexDocument(DOC_HEAD, table)
 
 		tmpName := fmt.Sprintf("%s_table_%d.", baseName, i)
 		// tableTexFile := filepath.Join(filepath.Dir(filePath), fmt.Sprintf("%stex", tmpName))
 		// tablePdfFile := filepath.Join(filepath.Dir(filePath), fmt.Sprintf("%spdf", tmpName))
-		tableTexFile := filepath.Join(pngBasePath, fmt.Sprintf("%stex", tmpName))
-		tablePdfFile := filepath.Join(pngBasePath, fmt.Sprintf("%spdf", tmpName))
+		tableTexFile := filepath.Join(trainDataset, fmt.Sprintf("%stex", tmpName))
+		tablePdfFile := filepath.Join(trainDataset, fmt.Sprintf("%spdf", tmpName))
+		tmpLog := filepath.Join(trainDataset, fmt.Sprintf("%slog", tmpName))
+		tmpAux := filepath.Join(trainDataset, fmt.Sprintf("%saux", tmpName))
 
 		err = os.WriteFile(tableTexFile, []byte(fullLatex), 0644)
 		if err != nil {
@@ -98,20 +122,71 @@ func ProcessTexFile(DOC_HEAD string, filePath string, bashPath string, pngBasePa
 			fmt.Printf("Error compiling LaTeX for %s: %v\n", filePath, err)
 		}
 		if !FolderExists(tablePdfFile) {
+			os.Remove(tableTexFile)
+			os.Remove(tmpLog)
+			os.Remove(tmpAux)
 			continue
 		}
 
-		err = convertPDFtoPNG(tablePdfFile, pngBasePath)
+		pngFileName, err := convertPDFtoPNG(tablePdfFile, trainDataset)
+		if !isDebug {
+			os.Remove(tableTexFile)
+			os.Remove(tablePdfFile)
+			os.Remove(tmpLog)
+			os.Remove(tmpAux)
+		}
+
 		if err != nil {
 			fmt.Printf("Error converting PDF to PNG for %s: %v\n", filePath, err)
-			// os.Remove(tableTexFile)
-			// os.Remove(tablePdfFile)
 			continue
 		}
-		// os.Remove(tableTexFile)
-		// os.Remove(tablePdfFile)
-		fmt.Printf("Table %d from %s converted to %s\n", i+1, filePath, pngBasePath)
+		fmt.Printf("Table %d from %s converted to %s\n", i+1, filePath, trainDataset)
+
+		// remove \n and \r , save "latex table" and "png" into metainfo.jsonl
+		table = strings.ReplaceAll(table, "\n", "")
+		table = strings.ReplaceAll(table, "\r", "")
+		newMetadata := Metadata{
+			FileName: pngFileName,
+			Latex:    table,
+		}
+		appendMetaInfo(newMetadata, trainDataset)
+
+		MAP_DATASET_COUNT[trainDataset]++
 	}
+	return true
+}
+
+func appendMetaInfo(newMetadata Metadata, bashpath string) {
+	// 打开文件，使用追加模式
+	file, err := os.OpenFile(filepath.Join(bashpath, "metadata.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println("Error opening file:", err)
+		return
+	}
+	defer file.Close()
+
+	// 将结构体转换为 JSON
+	jsonData, err := json.Marshal(newMetadata)
+	if err != nil {
+		fmt.Println("Error marshalling JSON:", err)
+		return
+	}
+
+	// 写入 JSON 行到文件
+	_, err = file.Write(jsonData)
+	if err != nil {
+		fmt.Println("Error writing to file:", err)
+		return
+	}
+
+	// 写入换行符
+	_, err = file.WriteString("\n")
+	if err != nil {
+		fmt.Println("Error writing newline to file:", err)
+		return
+	}
+
+	fmt.Println("New data successfully appended to metadata.jsonl")
 }
 
 func processInput(content string, basePath string) (string, error) {
@@ -162,11 +237,13 @@ func extractTables(content string) []string {
 }
 
 func createFullLatexDocument(docHead string, table string) string {
-	return `\documentclass[10]{standalone}
+	originalLatex := `\documentclass{standalone}
 ` + docHead + `
 \begin{document}
 ` + table + `
 \end{document}`
+
+	return originalLatex
 }
 
 func compileLaTeX(inputFile, outputFile string) error {
@@ -185,41 +262,45 @@ func compileLaTeX(inputFile, outputFile string) error {
 	return nil
 }
 
-func convertPDFtoPNG(pdfFile, outputDir string) error {
+func convertPDFtoPNG(pdfFile, outputDir string) (string, error) {
 	doc, err := fitz.New(pdfFile)
 	if err != nil {
-		return fmt.Errorf("error opening PDF: %v", err)
+		return "", fmt.Errorf("error opening PDF: %v", err)
 	}
 	defer doc.Close()
 
 	err = os.MkdirAll(outputDir, 0755)
 	if err != nil {
-		return fmt.Errorf("error creating output directory: %v", err)
+		return "", fmt.Errorf("error creating output directory: %v", err)
 	}
 
-	for n := 0; n < doc.NumPage(); n++ {
-		img, err := doc.Image(n)
-		if err != nil {
-			return fmt.Errorf("error rendering page %d: %v", n+1, err)
-		}
+	pngFileName := convertPNGName(pdfFile)
+	if doc.NumPage() > 1 {
+		return "", fmt.Errorf("PDF contains multiple pages")
+	}
 
-		outFile := filepath.Join(outputDir, convertPNGName(pdfFile))
-		f, err := os.Create(outFile)
-		if err != nil {
-			return fmt.Errorf("error creating output file: %v", err)
-		}
+	n := 0
+	img, err := doc.Image(n)
+	if err != nil {
+		return "", fmt.Errorf("error rendering page %d: %v", n+1, err)
+	}
 
-		err = png.Encode(f, img)
-		if err != nil {
-			f.Close()
-			return fmt.Errorf("error encoding PNG: %v", err)
-		}
+	outFile := filepath.Join(outputDir, pngFileName)
+	f, err := os.Create(outFile)
+	if err != nil {
+		return "", fmt.Errorf("error creating output file: %v", err)
+	}
+
+	err = png.Encode(f, img)
+	if err != nil {
 		f.Close()
-
-		fmt.Printf("Converted page %d to %s\n", n+1, outFile)
+		return "", fmt.Errorf("error encoding PNG: %v", err)
 	}
+	f.Close()
 
-	return nil
+	fmt.Printf("Converted page %d to %s\n", n+1, outFile)
+
+	return pngFileName, nil
 }
 
 func convertPNGName(input string) string {

@@ -8,14 +8,27 @@ import (
 	"strings"
 )
 
-var pngBasePath string = "TableHFDataset/train"
+var TRAIN_DATASET string = "output/train"
+var TRAIN_COUNT int = 8
+var TEST_DATASET string = "output/test"
+var TEST_COUNT int = 2
+var VALIDATION_DATASET string = "output/validation"
+var VALIDATION_COUNT int = 2
+var IS_DEBUG bool = false
+
+var isTrainContinue bool = true
+var isTestContinue bool = true
+var isValidationContinue bool = true
 
 func main() {
 	rootDir := "./arXiv"
-	readArXivTar(rootDir)
+	isContinue := readArXivTar(rootDir)
+	if !isContinue {
+		fmt.Println("read arXiv finished")
+	}
 }
 
-func readArXivTar(path string) {
+func readArXivTar(path string) bool {
 	yearIndexTars, err := os.ReadDir(path)
 	if err != nil {
 		fmt.Println("Error reading directory:", err)
@@ -31,7 +44,7 @@ func readArXivTar(path string) {
 		yearIndex := src.GetArXivYearIndex(yearIndexTar.Name())
 		if yearIndex == "" {
 			fmt.Println("Error extracting year from filename:", yearIndexTar.Name())
-			return
+			return true
 		}
 
 		yearIndexTarPath := filepath.Join(path, yearIndexTar.Name())
@@ -50,11 +63,15 @@ func readArXivTar(path string) {
 		}
 
 		// read paper in yearIndexFolder
-		readPaperGz(yearIndexFolder)
+		isContinue := readPaperGz(yearIndexFolder)
+		if !isContinue {
+			return false
+		}
 	}
+	return true
 }
 
-func readPaperGz(basePath string) {
+func readPaperGz(basePath string) bool {
 	paperGzs, err := os.ReadDir(basePath)
 	if err != nil {
 		fmt.Println("Error reading directory:", err)
@@ -100,7 +117,17 @@ func readPaperGz(basePath string) {
 
 		// generate png
 		for _, paperTex := range paperTexFiles {
-			src.ProcessTexFile(docHead, paperTex, paperFolder, pngBasePath)
+			if isTrainContinue {
+				isTrainContinue = src.ProcessTexFile(docHead, paperTex, paperFolder, TRAIN_DATASET, TRAIN_COUNT, IS_DEBUG)
+			} else if isTestContinue {
+				isTestContinue = src.ProcessTexFile(docHead, paperTex, paperFolder, TEST_DATASET, TEST_COUNT, IS_DEBUG)
+			} else if isValidationContinue {
+				isValidationContinue = src.ProcessTexFile(docHead, paperTex, paperFolder, VALIDATION_DATASET, VALIDATION_COUNT, IS_DEBUG)
+			}
+			if !isTrainContinue && !isTestContinue && !isValidationContinue {
+				return false
+			}
 		}
 	}
+	return true
 }
