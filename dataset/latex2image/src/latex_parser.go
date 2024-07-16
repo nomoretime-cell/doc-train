@@ -142,18 +142,65 @@ func ProcessTexFile(DOC_HEAD string, filePath string, bashPath string, trainData
 		}
 		fmt.Printf("Table %d from %s converted to %s\n", i+1, filePath, trainDataset)
 
-		// remove \n and \r , save "latex table" and "png" into metainfo.jsonl
-		table = strings.ReplaceAll(table, "\n", "")
-		table = strings.ReplaceAll(table, "\r", "")
+		table = tokenize(table)
 		newMetadata := Metadata{
-			FileName: pngFileName,
-			Latex:    table,
+			FileName:    pngFileName,
+			GroundTruth: table,
 		}
 		appendMetaInfo(newMetadata, trainDataset)
 
 		MAP_DATASET_COUNT[trainDataset]++
 	}
 	return true
+}
+
+func tokenize(input string) string {
+	var result strings.Builder
+	input = strings.ReplaceAll(input, "\\begin{tabular}", "<s_table>")
+	input = strings.ReplaceAll(input, "\\end{tabular}", "</s_table>")
+
+	input = strings.ReplaceAll(input, "\\cr", "\\\\")
+	input = strings.ReplaceAll(input, "\r\n", "\n")
+	input = strings.ReplaceAll(input, "\n\r", "\n")
+	rows := strings.Split(input, "\n")
+	for _, row := range rows {
+		row = strings.TrimSpace(row)
+		if row == "" {
+			continue
+		}
+
+		isBegin := strings.Contains(row, "s_table")
+		isRowEnd := strings.HasSuffix(row, "\\\\")
+		if isBegin {
+			row = strings.ReplaceAll(row, "{", "<s_column_type>")
+			row = strings.ReplaceAll(row, "}", "</s_column_type>")
+			result.WriteString(row)
+		} else if !isRowEnd {
+			result.WriteString("<s_attribute>")
+			result.WriteString(row)
+		} else {
+			result.WriteString("<s_row>")
+
+			columns := strings.Split(row, "&")
+			for _, col := range columns {
+				col = strings.TrimSpace(col)
+				result.WriteString("<s_column>")
+				result.WriteString(col)
+				result.WriteString("</s_column>")
+			}
+		}
+
+		if isBegin {
+			// do nothing
+		} else if !isRowEnd {
+			result.WriteString("</s_attribute>")
+		} else {
+			result.WriteString("</s_row>")
+		}
+	}
+	strResult := result.String()
+	strResult = strings.ReplaceAll(strResult, "\\\\", "")
+	return strResult
 }
 
 func appendMetaInfo(newMetadata Metadata, bashpath string) {
