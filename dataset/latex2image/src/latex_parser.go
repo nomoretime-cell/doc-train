@@ -2,6 +2,7 @@ package src
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image/png"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gen2brain/go-fitz"
 )
@@ -142,7 +144,7 @@ func ProcessTexFile(DOC_HEAD string, filePath string, bashPath string, trainData
 		}
 		fmt.Printf("Table %d from %s converted to %s\n", i+1, filePath, trainDataset)
 
-		table = tokenize(table)
+		table = replace_norm(table)
 		newMetadata := Metadata{
 			FileName:    pngFileName,
 			GroundTruth: table,
@@ -154,7 +156,14 @@ func ProcessTexFile(DOC_HEAD string, filePath string, bashPath string, trainData
 	return true
 }
 
-func tokenize(input string) string {
+func replace_norm(input string) string {
+	input = strings.ReplaceAll(input, "\\cr", "\\\\")
+	input = strings.ReplaceAll(input, "\r", "")
+	input = strings.ReplaceAll(input, "\n", "[NEWLINE]")
+	return input
+}
+
+func replace_latex(input string) string {
 	var result strings.Builder
 	input = strings.ReplaceAll(input, "\\begin{tabular}", "<s_table>")
 	input = strings.ReplaceAll(input, "\\end{tabular}", "</s_table>")
@@ -236,9 +245,15 @@ func appendMetaInfo(newMetadata Metadata, bashpath string) {
 	fmt.Println("New data successfully appended to metadata.jsonl")
 }
 
-func processInput(content string, basePath string) (string, error) {
+func processInput(content string, basePath string) (result string, err error) {
 	inputRegex := regexp.MustCompile(`\\input\{([^}]+)\}`)
 
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("occur panic: %v", r)
+			result = ""
+		}
+	}()
 	processedContent := inputRegex.ReplaceAllStringFunc(content, func(match string) string {
 		filename := inputRegex.FindStringSubmatch(match)[1]
 		fullPath := filepath.Join(basePath, filename)
@@ -294,7 +309,10 @@ func createFullLatexDocument(docHead string, table string) string {
 }
 
 func compileLaTeX(inputFile, outputFile string) error {
-	cmd := exec.Command("pdflatex", "-interaction=nonstopmode", "-output-directory="+filepath.Dir(outputFile), inputFile)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "pdflatex", "-interaction=nonstopmode", "-output-directory="+filepath.Dir(outputFile), inputFile)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -303,6 +321,9 @@ func compileLaTeX(inputFile, outputFile string) error {
 	err := cmd.Run()
 
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("LaTeX compilation timed out after 2 minutes")
+		}
 		return fmt.Errorf("LaTeX compilation failed: %v\nStdout: %s\nStderr: %s", err, stdout.String(), stderr.String())
 	}
 
@@ -330,6 +351,17 @@ func convertPDFtoPNG(pdfFile, outputDir string) (string, error) {
 	img, err := doc.Image(n)
 	if err != nil {
 		return "", fmt.Errorf("error rendering page %d: %v", n+1, err)
+	}
+
+	// check image size
+	bounds := img.Bounds()
+	width := bounds.Max.X - bounds.Min.X
+	height := bounds.Max.Y - bounds.Min.Y
+
+	// set min image size
+	minWidth, minHeight := 100, 100
+	if width < minWidth || height < minHeight {
+		return "", fmt.Errorf("image size too small: %dx%d (minimum required: %dx%d)", width, height, minWidth, minHeight)
 	}
 
 	outFile := filepath.Join(outputDir, pngFileName)
