@@ -16,6 +16,7 @@ protobuf = "^5.27.2"
 pytorch-lightning = "^2.3.3"
 wandb = "^0.17.4"
 donut-python = "^1.0.9"
+tensorboardx = "^2.6.2.2"
 
 
 [build-system]

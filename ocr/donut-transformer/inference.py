@@ -4,13 +4,17 @@ from transformers import DonutProcessor, VisionEncoderDecoderModel
 from datasets import load_dataset
 import torch
 
-processor = DonutProcessor.from_pretrained("/home/yejibing/code/doc-parser/doc-train/ocr/donut/models/donut-base-finetuned-cord-v2")
-model = VisionEncoderDecoderModel.from_pretrained("/home/yejibing/code/doc-parser/doc-train/ocr/donut/models/donut-base-finetuned-cord-v2")
+custom_dataset = "/home/yejibing/code/doc-parser/doc-train/dataset/latex2image/output"
+base_model = "/home/yejibing/code/doc-parser/doc-train/ocr/donut-transformer/base/model_epoch_6"
+torch.cuda.set_device(1)
+
+processor = DonutProcessor.from_pretrained(base_model)
+model = VisionEncoderDecoderModel.from_pretrained(base_model)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model.to(device)
 # load document image
-dataset = load_dataset("/home/yejibing/code/doc-parser/doc-train/ocr/donut/models/cord-v2", split="test")
+dataset = load_dataset(custom_dataset, split="train")
 image = dataset[0]["image"]
 
 # prepare decoder inputs
