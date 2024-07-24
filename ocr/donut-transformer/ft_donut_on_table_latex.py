@@ -29,9 +29,12 @@ We'll use PyTorch Lightning for training here, but note that this is optional, y
 Next, let's load the dataset from the [hub](https://huggingface.co/datasets/naver-clova-ix/cord-v2). The dataset consists of (image, JSON) pairs. Note that it doesn't have to be JSON, it could also be JSON lines, plain text, etc.
 """
 
-custom_dataset = "/home/yejibing/code/doc-parser/doc-train/dataset/latex2image/output"
-base_model = "/home/yejibing/code/doc-parser/doc-train/ocr/donut-transformer/base/model_epoch_6"
-local_save_dir = "/home/yejibing/code/doc-parser/doc-train/ocr/donut-transformer/result"
+custom_dataset = "/home/yejibing/code/doc-train/dataset/latex2image/output"
+base_model = "/home/yejibing/code/doc-train/ocr/donut-transformer/donut-base"
+local_save_dir = "/home/yejibing/code/doc-train/ocr/donut-transformer/result"
+
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from datasets import load_dataset
 
@@ -477,17 +480,19 @@ class SaveModelCallback(Callback):
         self.save_dir = save_dir
 
     def on_train_epoch_end(self, trainer, pl_module):
-        epoch = trainer.current_epoch
-        save_path = os.path.join(self.save_dir, f"model_epoch_{epoch}")
-        print(f"Saving model locally, epoch {epoch}")
-        pl_module.model.save_pretrained(save_path)
-        pl_module.processor.save_pretrained(save_path)
+        if trainer.is_global_zero:
+            epoch = trainer.current_epoch
+            save_path = os.path.join(self.save_dir, f"model_epoch_{epoch}")
+            print(f"Saving model locally, epoch {epoch}")
+            pl_module.model.save_pretrained(save_path)
+            pl_module.processor.save_pretrained(save_path)
 
     def on_train_end(self, trainer, pl_module):
-        save_path = os.path.join(self.save_dir, "model_final")
-        print("Saving final model locally")
-        pl_module.model.save_pretrained(save_path)
-        pl_module.processor.save_pretrained(save_path)
+        if trainer.is_global_zero:
+            save_path = os.path.join(self.save_dir, "model_final")
+            print("Saving final model locally")
+            pl_module.model.save_pretrained(save_path)
+            pl_module.processor.save_pretrained(save_path)
 
 
 # 创建回调实例
@@ -500,10 +505,12 @@ logger = TensorBoardLogger(
     default_hp_metric=False,
 )
 
+from pytorch_lightning.strategies import DDPStrategy
 # 将新的回调添加到 Trainer 的 callbacks 列表中
 trainer = pl.Trainer(
+    devices=2,
+    strategy=DDPStrategy(),
     accelerator="gpu",
-    devices=1,
     max_epochs=config.get("max_epochs"),
     val_check_interval=config.get("val_check_interval"),
     check_val_every_n_epoch=config.get("check_val_every_n_epoch"),

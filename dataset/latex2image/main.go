@@ -9,11 +9,11 @@ import (
 )
 
 var TRAIN_DATASET string = "output/train"
-var TRAIN_COUNT int = 8
+var TRAIN_COUNT int = 100
 var TEST_DATASET string = "output/test"
-var TEST_COUNT int = 2
+var TEST_COUNT int = 20
 var VALIDATION_DATASET string = "output/validation"
-var VALIDATION_COUNT int = 2
+var VALIDATION_COUNT int = 20
 var IS_DEBUG bool = false
 
 var isTrainContinue bool = true
@@ -21,15 +21,16 @@ var isTestContinue bool = true
 var isValidationContinue bool = true
 
 func main() {
-	rootDir := "./arXiv"
-	isContinue := readArXivTar(rootDir)
+	rootDir := "/home/yejibing/dataset/arXiv"
+	outDir := "./arXiv"
+	isContinue := readArXivTar(rootDir, outDir)
 	if !isContinue {
 		fmt.Println("read arXiv finished")
 	}
 }
 
-func readArXivTar(path string) bool {
-	yearIndexTars, err := os.ReadDir(path)
+func readArXivTar(source string, output string) bool {
+	yearIndexTars, err := os.ReadDir(source)
 	if err != nil {
 		fmt.Println("Error reading directory:", err)
 	}
@@ -47,8 +48,8 @@ func readArXivTar(path string) bool {
 			return true
 		}
 
-		yearIndexTarPath := filepath.Join(path, yearIndexTar.Name())
-		yearIndexFolder := filepath.Join(path, yearIndex)
+		yearIndexTarPath := filepath.Join(source, yearIndexTar.Name())
+		yearIndexFolder := filepath.Join(output, yearIndex)
 
 		if !src.FolderExists(yearIndexFolder) {
 			fmt.Println("file folder not exists and need to decompression")
@@ -77,23 +78,22 @@ func readPaperGz(basePath string) bool {
 		fmt.Println("Error reading directory:", err)
 	}
 	for _, paperGz := range paperGzs {
-		if paperGz.IsDir() || !strings.HasSuffix(paperGz.Name(), ".gz") {
-			continue
-		}
-
 		paperGzPath := filepath.Join(basePath, paperGz.Name())
 		paperFolder := filepath.Join(basePath, strings.TrimSuffix(paperGz.Name(), ".gz"))
 
-		if !src.FolderExists(paperFolder) {
-			fmt.Println("file folder not exists and need to be created")
-			err := src.ExtractTar(paperGzPath, paperFolder)
-			if err != nil {
-				fmt.Printf("unzip error: %v\n", err)
+		if strings.HasSuffix(paperGz.Name(), ".gz") {
+			if !src.FolderExists(paperFolder) {
+				fmt.Println("file folder not exists and need to be created")
+				err := src.ExtractTar(paperGzPath, paperFolder)
+				if err != nil {
+					fmt.Printf("unzip error: %v\n", err)
+				} else {
+					fmt.Println("unzip success")
+				}
 			} else {
-				fmt.Println("unzip success")
+				fmt.Printf("folder %s is exists, do not need to be created\n", paperFolder)
+				continue
 			}
-		} else {
-			fmt.Printf("folder %s is exists, do not need to be created\n", paperFolder)
 		}
 
 		// find all .tex files from paper folder

@@ -1,9 +1,10 @@
 dataset/latex2image/arXiv/*
 dataset/latex2image/output*
-*.png
 dataset/latex2image/latex2image
+dataset/latex2image/install-tl-*
 ocr/donut-transformer/base*
 ocr/donut-transformer/result*
+*.png
 *.log
 *.gz
 *.out
