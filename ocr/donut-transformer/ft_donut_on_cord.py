@@ -28,10 +28,15 @@ We'll use PyTorch Lightning for training here, but note that this is optional, y
 
 Next, let's load the dataset from the [hub](https://huggingface.co/datasets/naver-clova-ix/cord-v2). The dataset consists of (image, JSON) pairs. Note that it doesn't have to be JSON, it could also be JSON lines, plain text, etc.
 """
+custom_dataset = "/home/yejibing/code/doc-train/ocr/donut-transformer/cord-v2"
+base_model = "/home/yejibing/code/doc-train/ocr/donut-transformer/donut-base"
+local_save_dir = "/home/yejibing/code/doc-train/ocr/donut-transformer/result-cord"
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from datasets import load_dataset
 
-dataset = load_dataset("naver-clova-ix/cord-v2")
+dataset = load_dataset(custom_dataset)
 
 dataset
 
@@ -41,7 +46,7 @@ example = dataset['train'][0]
 image = example['image']
 # let's make the image a bit smaller when visualizing
 width, height = image.size
-display(image.resize((int(width*0.3), int(height*0.3))))
+# display(image.resize((int(width*0.3), int(height*0.3))))
 
 # let's load the corresponding JSON dictionary (as string representation)
 ground_truth = example['ground_truth']
@@ -51,7 +56,7 @@ print(ground_truth)
 
 from ast import literal_eval
 
-literal_eval(ground_truth)['gt_parse']
+# literal_eval(ground_truth)['gt_parse']
 
 """## Load model and processor
 
@@ -67,7 +72,7 @@ max_length = 768
 
 # update image_size of the encoder
 # during pre-training, a larger image size was used
-config = VisionEncoderDecoderConfig.from_pretrained("naver-clova-ix/donut-base")
+config = VisionEncoderDecoderConfig.from_pretrained(base_model)
 config.encoder.image_size = image_size # (height, width)
 # update max_length of the decoder (for generation)
 config.decoder.max_length = max_length
@@ -78,8 +83,8 @@ config.decoder.max_length = max_length
 
 from transformers import DonutProcessor, VisionEncoderDecoderModel
 
-processor = DonutProcessor.from_pretrained("naver-clova-ix/donut-base")
-model = VisionEncoderDecoderModel.from_pretrained("naver-clova-ix/donut-base", config=config)
+processor = DonutProcessor.from_pretrained(base_model)
+model = VisionEncoderDecoderModel.from_pretrained(base_model, config=config)
 
 """## Create PyTorch dataset
 
@@ -245,12 +250,12 @@ class DonutDataset(Dataset):
 processor.image_processor.size = image_size[::-1] # should be (width, height)
 processor.image_processor.do_align_long_axis = False
 
-train_dataset = DonutDataset("naver-clova-ix/cord-v2", max_length=max_length,
+train_dataset = DonutDataset(custom_dataset, max_length=max_length,
                              split="train", task_start_token="<s_cord-v2>", prompt_end_token="<s_cord-v2>",
                              sort_json_key=False, # cord dataset is preprocessed, so no need for this
                              )
 
-val_dataset = DonutDataset("naver-clova-ix/cord-v2", max_length=max_length,
+val_dataset = DonutDataset(custom_dataset, max_length=max_length,
                              split="validation", task_start_token="<s_cord-v2>", prompt_end_token="<s_cord-v2>",
                              sort_json_key=False, # cord dataset is preprocessed, so no need for this
                              )
@@ -432,7 +437,7 @@ What's great is that we can automatically train on the hardware we have (in our 
 """
 
 config = {"max_epochs":30,
-          "val_check_interval":0.2, # how many times we want to validate during an epoch
+          "val_check_interval":0.9, # how many times we want to validate during an epoch
           "check_val_every_n_epoch":1,
           "gradient_clip_val":1.0,
           "num_training_samples_per_epoch": 800,
@@ -464,20 +469,19 @@ class SaveModelCallback(Callback):
         self.save_dir = save_dir
 
     def on_train_epoch_end(self, trainer, pl_module):
-        epoch = trainer.current_epoch
-        save_path = os.path.join(self.save_dir, f"model_epoch_{epoch}")
-        print(f"Saving model locally, epoch {epoch}")
-        pl_module.model.save_pretrained(save_path)
-        pl_module.processor.save_pretrained(save_path)
+        if trainer.is_global_zero:
+            epoch = trainer.current_epoch
+            save_path = os.path.join(self.save_dir, f"model_epoch_{epoch}")
+            print(f"Saving model locally, epoch {epoch}")
+            pl_module.model.save_pretrained(save_path)
+            pl_module.processor.save_pretrained(save_path)
 
     def on_train_end(self, trainer, pl_module):
-        save_path = os.path.join(self.save_dir, "model_final")
-        print("Saving final model locally")
-        pl_module.model.save_pretrained(save_path)
-        pl_module.processor.save_pretrained(save_path)
-
-# 定义保存路径
-local_save_dir = "/workspace/origin/result"
+        if trainer.is_global_zero:
+            save_path = os.path.join(self.save_dir, "model_final")
+            print("Saving final model locally")
+            pl_module.model.save_pretrained(save_path)
+            pl_module.processor.save_pretrained(save_path)
 
 # 创建回调实例
 save_model_callback = SaveModelCallback(save_dir=local_save_dir)
@@ -489,10 +493,12 @@ logger = TensorBoardLogger(
     default_hp_metric=False,
 )
 
+from pytorch_lightning.strategies import DDPStrategy
 # 将新的回调添加到 Trainer 的 callbacks 列表中
 trainer = pl.Trainer(
     accelerator="gpu",
-    devices=1,
+    devices=2,
+    strategy=DDPStrategy(),
     max_epochs=config.get("max_epochs"),
     val_check_interval=config.get("val_check_interval"),
     check_val_every_n_epoch=config.get("check_val_every_n_epoch"),
@@ -540,7 +546,7 @@ model.to(device)
 output_list = []
 accs = []
 
-dataset = load_dataset("naver-clova-ix/cord-v2", split="validation")
+dataset = load_dataset(custom_dataset, split="validation")
 
 for idx, sample in tqdm(enumerate(dataset), total=len(dataset)):
     # prepare encoder inputs
