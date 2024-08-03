@@ -32,7 +32,14 @@ func FindTexFiles(root string) ([]string, error) {
 	return files, err
 }
 
-func ExtractPreamble(content string, basePath string) (string, error) {
+func ExtractPreamble(content string, basePath string) (result string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("occur panic: %v", r)
+			result = ""
+		}
+	}()
+
 	reStart := regexp.MustCompile(`(?m)^\s*\\documentclass.*$`)
 	reEnd := regexp.MustCompile(`(?m)^\s*\\begin\{document\}.*$`)
 
@@ -55,7 +62,7 @@ func ExtractPreamble(content string, basePath string) (string, error) {
 	preamble := strings.Join(matches, "\n")
 
 	// 处理前导区中的 \input 命令
-	processedPreamble, err := processInput(preamble, basePath)
+	processedPreamble, err := processInput(preamble, basePath, 0)
 	if err != nil {
 		return "", err
 	}
@@ -159,7 +166,7 @@ func ProcessTexFile(DOC_HEAD string, filePath string, bashPath string, trainData
 func replace_norm(input string) string {
 	input = strings.ReplaceAll(input, "\\cr", "\\\\")
 	input = strings.ReplaceAll(input, "\r", "")
-	input = strings.ReplaceAll(input, "\n", "[NEWLINE]")
+	// input = strings.ReplaceAll(input, "\n", "[NEWLINE]")
 	return input
 }
 
@@ -245,7 +252,13 @@ func appendMetaInfo(newMetadata Metadata, bashpath string) {
 	fmt.Println("New data successfully appended to metadata.jsonl")
 }
 
-func processInput(content string, basePath string) (result string, err error) {
+const maxRecursionDepth = 3
+
+func processInput(content string, basePath string, depth int) (result string, err error) {
+	if depth > maxRecursionDepth {
+		return content, fmt.Errorf("达到最大递归深度 %d", maxRecursionDepth)
+	}
+
 	inputRegex := regexp.MustCompile(`\\input\{([^}]+)\}`)
 
 	defer func() {
@@ -270,7 +283,7 @@ func processInput(content string, basePath string) (result string, err error) {
 		}
 
 		// 递归处理加载的文件中的 \input 命令
-		processedFileContent, _ := processInput(fileContent, filepath.Dir(fullPath))
+		processedFileContent, _ := processInput(fileContent, filepath.Dir(fullPath), depth+1)
 		return processedFileContent
 	})
 

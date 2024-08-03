@@ -9,12 +9,13 @@ import (
 )
 
 var TRAIN_DATASET string = "output/train"
-var TRAIN_COUNT int = 100
+var TRAIN_COUNT int = 50000000
 var TEST_DATASET string = "output/test"
-var TEST_COUNT int = 20
+var TEST_COUNT int = 2
 var VALIDATION_DATASET string = "output/validation"
-var VALIDATION_COUNT int = 20
+var VALIDATION_COUNT int = 2
 var IS_DEBUG bool = false
+var IS_REGENERATE bool = false
 
 var isTrainContinue bool = true
 var isTestContinue bool = true
@@ -61,6 +62,9 @@ func readArXivTar(source string, output string) bool {
 			}
 		} else {
 			fmt.Printf("folder %s is exists, do not need to be created\n", yearIndex)
+			if !IS_REGENERATE {
+				continue
+			}
 		}
 
 		// read paper in yearIndexFolder
