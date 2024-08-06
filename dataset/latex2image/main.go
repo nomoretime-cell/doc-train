@@ -5,23 +5,32 @@ import (
 	"latex2image/src"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 )
 
 var TRAIN_DATASET string = "output/train"
-var TRAIN_COUNT int = 50000000
+var TRAIN_COUNT int = 10
 var TEST_DATASET string = "output/test"
-var TEST_COUNT int = 2
+var TEST_COUNT int = 10
 var VALIDATION_DATASET string = "output/validation"
-var VALIDATION_COUNT int = 2
-var IS_DEBUG bool = false
-var IS_REGENERATE bool = false
+var VALIDATION_COUNT int = 10
+var IS_DEBUG bool = true
+var IS_REGENERATE bool = true
 
 var isTrainContinue bool = true
 var isTestContinue bool = true
 var isValidationContinue bool = true
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered from panic:", r)
+			fmt.Println("Stack trace:")
+			fmt.Println(string(debug.Stack()))
+		}
+	}()
+
 	rootDir := "/home/yejibing/dataset/arXiv"
 	outDir := "./arXiv"
 	isContinue := readArXivTar(rootDir, outDir)
@@ -108,7 +117,7 @@ func readPaperGz(basePath string) bool {
 		}
 
 		// get predefined line from main tex file
-		var docHead string = ""
+		docHead := ""
 		for _, paperTex := range paperTexFiles {
 			latexContent, _ := os.ReadFile(paperTex)
 			tmpDocHead, err := src.ExtractPreamble(string(latexContent), paperFolder)

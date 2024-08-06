@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gen2brain/go-fitz"
 )
@@ -40,40 +41,129 @@ func ExtractPreamble(content string, basePath string) (result string, err error)
 		}
 	}()
 
-	reStart := regexp.MustCompile(`(?m)^\s*\\documentclass.*$`)
+	// reStart := regexp.MustCompile(`(?m)^\s*\\documentclass.*$`)
+	// startIndex := reStart.FindStringIndex(content)
+	// if startIndex == nil {
+	// 	return "", fmt.Errorf("未找到 \\documentclass")
+	// }
+
 	reEnd := regexp.MustCompile(`(?m)^\s*\\begin\{document\}.*$`)
-
-	startIndex := reStart.FindStringIndex(content)
-	if startIndex == nil {
-		return "", fmt.Errorf("未找到 \\documentclass")
-	}
-
-	endIndex := reEnd.FindStringIndex(content[startIndex[1]:])
+	endIndex := reEnd.FindStringIndex(content)
 	if endIndex == nil {
-		return "", fmt.Errorf("未找到 \\begin{document}")
+		return "", fmt.Errorf("not found \\begin{document}")
 	}
 
-	fullPreamble := content[startIndex[1] : startIndex[1]+endIndex[0]]
+	fullPreamble := content[:endIndex[0]]
 
-	// 只保留 \input 和 \newcommand 开头的行
-	reKeep := regexp.MustCompile(`(?m)^\s*(\\input|\\newcommand).*$`)
+	// only keep \input \newcommand \def
+	reKeep := regexp.MustCompile(`(?m)^\s*(\\input|\\newcommand|\\def).*$`)
 	matches := reKeep.FindAllString(fullPreamble, -1)
 
 	preamble := strings.Join(matches, "\n")
 
-	// 处理前导区中的 \input 命令
+	// process \input
 	processedPreamble, err := processInput(preamble, basePath, 0)
 	if err != nil {
 		return "", err
 	}
 
-	// 再次筛选，只保留 \newcommand 和 \def 开头的行
 	reFinalKeep := regexp.MustCompile(`(?m)^\s*(\\newcommand|\\def).*$`)
 	finalMatches := reFinalKeep.FindAllString(processedPreamble, -1)
 
 	finalPreamble := strings.Join(finalMatches, "\n")
 
-	return strings.TrimSpace(finalPreamble), nil
+	return finalPreamble, nil
+}
+
+func removeAfterPercent(s string) string {
+	index := strings.Index(s, "%")
+	if index != -1 {
+		return s[:index]
+	}
+	return s
+}
+
+func containCommand(text string, commandMap map[string]string) bool {
+	for name := range commandMap {
+		contain := strings.Contains(text, name)
+		if contain {
+			return true
+		}
+	}
+	return false
+}
+
+func replaceMacro(text string, macroMap map[string]string) string {
+	for macroName, macroDef := range macroMap {
+		text = strings.ReplaceAll(text, macroName, macroDef)
+	}
+	return text
+}
+
+func parseLaTeXMacro(def string) (string, string, string, string) {
+	def = strings.TrimSpace(def)
+
+	var macroName, macroDef string
+	var commandName, commandDef string
+
+	if strings.HasPrefix(def, "\\def") {
+		def = strings.TrimPrefix(def, "\\def")
+		def = strings.TrimLeftFunc(def, unicode.IsSpace) // remove \def space
+
+		// get def name
+		endOfMacroName := strings.IndexFunc(def, func(r rune) bool {
+			return unicode.IsSpace(r) || r == '{'
+		})
+		if endOfMacroName == -1 {
+			return "", "", "", ""
+		}
+		macroName = def[:endOfMacroName]
+		def = def[endOfMacroName:]
+
+		// get def value
+		def = strings.TrimLeftFunc(def, unicode.IsSpace) // remove def space
+		if !strings.HasPrefix(def, "{") {
+			return "", "", "", ""
+		}
+		macroDef = strings.TrimPrefix(def, "{")
+	} else if strings.HasPrefix(def, "\\newcommand") {
+		// process \newcommand
+		def = strings.TrimPrefix(def, "\\newcommand")
+		def = strings.TrimLeftFunc(def, unicode.IsSpace) // remove \newcommand space
+
+		// get name
+		if !strings.HasPrefix(def, "{") {
+			return "", "", "", ""
+		}
+		closeBrace := strings.Index(def, "}")
+		if closeBrace == -1 {
+			return "", "", "", ""
+		}
+		commandName = strings.Trim(def[:closeBrace+1], "{}")
+		def = def[closeBrace+1:]
+
+		// process param
+		if strings.HasPrefix(def, "[") {
+			closeBracket := strings.Index(def, "]")
+			if closeBracket != -1 {
+				def = def[closeBracket+1:]
+			}
+		}
+
+		// process '{'
+		if !strings.HasPrefix(def, "{") {
+			return "", "", "", ""
+		}
+
+		commandDef = strings.TrimPrefix(def, "{")
+	} else {
+		return "", "", "", ""
+	}
+
+	macroDef = strings.TrimSuffix(macroDef, "}")
+	commandDef = strings.TrimSuffix(commandDef, "}")
+
+	return macroName, macroDef, commandName, commandDef
 }
 
 func ProcessTexFile(DOC_HEAD string, filePath string, bashPath string, trainDataset string, totalDatasetCount int, isDebug bool) bool {
@@ -109,9 +199,11 @@ func ProcessTexFile(DOC_HEAD string, filePath string, bashPath string, trainData
 
 		// remove tabs and spaces
 		table = strings.ReplaceAll(table, "\t", "")
-		table = strings.ReplaceAll(table, " ", "")
+		// table = strings.ReplaceAll(table, " ", "")
 		fullLatex := createFullLatexDocument(DOC_HEAD, table)
-
+		if fullLatex == "" {
+			continue
+		}
 		tmpName := fmt.Sprintf("%s_table_%d.", baseName, i)
 		// tableTexFile := filepath.Join(filepath.Dir(filePath), fmt.Sprintf("%stex", tmpName))
 		// tablePdfFile := filepath.Join(filepath.Dir(filePath), fmt.Sprintf("%spdf", tmpName))
@@ -312,10 +404,46 @@ func extractTables(content string) []string {
 }
 
 func createFullLatexDocument(docHead string, table string) string {
+	macroStrings := strings.Split(strings.TrimSpace(docHead), "\n")
+	docHead = ""
+	macroMap := make(map[string]string)
+	commandMap := make(map[string]string)
+	for _, macroString := range macroStrings {
+		macroString = removeAfterPercent(macroString)
+		macroName, macroDef, commandName, commandDef := parseLaTeXMacro(macroString)
+		if macroName != "" && macroDef != "" {
+			macroMap[macroName] = macroDef
+			fmt.Printf("Macro added to map: %s -> %s\n", macroName, macroDef)
+		}
+		if commandName != "" && commandDef != "" {
+			commandMap[commandName] = commandDef
+			fmt.Printf("Command added to map: %s -> %s\n", commandName, commandDef)
+		}
+	}
+
+	if containCommand(table, commandMap) {
+		return ""
+	}
+	table = replaceMacro(table, macroMap)
+
+	realTable := ""
+	tmpTable := strings.Split(table, "\n")
+	for _, tableLine := range tmpTable {
+		tableLine = removeAfterPercent(tableLine)
+		if tableLine == "" {
+			continue
+		}
+		if realTable == "" {
+			realTable = tableLine
+		} else {
+			realTable = realTable + "\n" + tableLine
+		}
+	}
+
 	originalLatex := `\documentclass{standalone}
 ` + docHead + `
 \begin{document}
-` + table + `
+` + realTable + `
 \end{document}`
 
 	return originalLatex
